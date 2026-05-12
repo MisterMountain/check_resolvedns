@@ -1,0 +1,85 @@
+param (
+    [Parameter(Mandatory=$false)]
+    [Alias("V")]
+    [switch]$Version,
+
+    [Parameter(Mandatory=$false)]
+    [Alias("H")]
+    [string]$Hostname = "1.1.1.1",
+
+    [Parameter(Mandatory=$true)]
+    [Alias("l", "query_address")]
+    [string]$QueryAddress,
+
+    [Parameter(Mandatory=$false)]
+    [Alias("p")]
+    [int]$Port = 53,
+
+    [Parameter(Mandatory=$false)]
+    [Alias("a", "expected_address")]
+    [string]$ExpectedAddress,
+
+    [Parameter(Mandatory=$false)]
+    [Alias("w", "warning")]
+    [int]$WarningMs = 0,
+
+    [Parameter(Mandatory=$false)]
+    [Alias("c", "critical")]
+    [int]$CriticalMs = 0
+)
+
+if ($Version) {
+    Write-Host "Check-ResolveDns version 0.1"
+    exit 3
+}
+
+try {
+    $resolveParams = @{
+        Query = $QueryAddress
+        ErrorAction = 'Stop'
+    }
+
+    if ($PSBoundParameters.ContainsKey('Hostname')) {
+        $resolveParams["NameServer"] = "${Hostname}:${Port}"
+    }
+
+    $elapsed = Measure-Command {
+        $script:results = Resolve-Dns @resolveParams
+    }
+    $responseTime = [math]::Round($elapsed.TotalMilliseconds, 2)
+    $ips = $script:results | Select-Object -ExpandProperty Answers | Select-Object -ExpandProperty Address | Select-Object -ExpandProperty IPAddressToString
+
+
+
+    if ($ips) {
+        $ipString = $ips -join ", "
+
+        if ($CriticalMs -gt 0 -and $responseTime -ge $CriticalMs) {
+            $Status = "CRITICAL"
+            $ExitCode = 2
+        }
+        elseif ($PSBoundParameters.ContainsKey('ExpectedAddress') -and ($ips -notcontains $ExpectedAddress)) {
+            $Status = "CRITICAL"
+            $ExitCode = 2
+        }
+        elseif ($WarningMs -gt 0 -and $responseTime -ge $WarningMs) {
+            $Status = "WARNING"
+            $ExitCode = 1
+        }
+        else {
+            $Status = "OK"
+            $ExitCode = 0
+        }
+        $statusMsg = "DNS ${Status} - ${responseTime}ms response time ($QueryAddress resolved to $ipString). |time=${responseTime}ms;$WarningMs;$CriticalMs;0;10000"
+        Write-Host "$statusMsg"
+        exit $ExitCode
+    }
+    else {
+        Write-Host "CRITICAL: No IP records found for $QueryAddress"
+        exit 2
+    }
+}
+catch {
+    Write-Host "CRITICAL: Failed to resolve $QueryAddress - $($_.Exception.Message)"
+    exit 2
+}
